@@ -31,7 +31,7 @@
 %define faad 1
 %define fdk_aac 1
 Name:           vlc
-Version:        3.0.17.3
+Version:        3.0.17.4
 Release:        1
 Summary:        Graphical media player
 License:        GPL-2.0-or-later AND LGPL-2.1-or-later
@@ -49,6 +49,12 @@ Patch2:         vlc-lua-5.3.patch
 Patch3:         fix-build-with-fdk-2.0.patch
 # PATCH-FIX-UPSTREAM https://trac.videolan.org/vlc/ticket/25473 dominic.mayers@meditationstudies.org -- The maintainers of live555 changed connectionEndpointAddresss to getConnectionEndpointAddress, which now provides the address value by reference.
 Patch4:         vlc-get-addr-by-ref-from-getConnectionEndpointAddress.patch
+Patch5:         vlc-lua-867.patch
+# PATCH-FIX-UPSTREAM vlc-dav1d-1.0.patch -- Fix build with dav1d 1.0
+Patch6:         vlc-dav1d-1.0.patch
+# PATCH-FIX-UPSTREAM -- Use OpenCV C++ API
+Patch7:         vlc-Port-OpenCV-facedetect-example-to-C-API.patch
+Patch8:         vlc-opencv4.patch
 
 BuildRequires:  pkgconfig(dri)
 BuildRequires:  mesa-libEGL-devel
@@ -70,7 +76,6 @@ BuildRequires:  freetype
 BuildRequires:  fribidi-devel
 BuildRequires:  gdk-pixbuf2-devel
 BuildRequires:  gettext-devel
-BuildRequires:  git
 BuildRequires:  gtk3-devel
 BuildRequires:  openldap
 BuildRequires:  qt5-qtbase-gui
@@ -172,9 +177,9 @@ BuildRequires:  pkgconfig(wayland-protocols)
 BuildRequires:  pkgconfig(gstreamer-app-1.0)
 %endif
 BuildRequires:  pkgconfig(Qt5X11Extras)
-# for some reason libXi-devel is explicitly needed on Leap 42.1, otherwise the build fails...
 BuildRequires:  pkgconfig(xi)
 BuildRequires:  pkgconfig(libupnp)
+BuildRequires:  opencv
 %if 0%{?vnc}
 BuildRequires:  pkgconfig(libvncclient) >= 0.9.9
 %endif
@@ -336,12 +341,32 @@ Conflicts:      %{conflicts}-qt
 This subpackage provides a Qt interface for VLC and selects it by
 default when `vlc` is invoked from an X session.
 
+%package opencv
+Summary:        OpenCV plugins for VLC media player
+Group:          Productivity/Multimedia/Video/Players
+Requires:       %{name}-noX = %{version}-%{release}
+# We need the noX package first, as it contains vlc-cache-gen
+Requires(post): %{name}-noX
+# Package split
+Provides:       %{name}:%{_libdir}/vlc/plugins/video_filter/libopencv_example_plugin.so
+Conflicts:      %{name} < %{version}-%{release}
+Supplements:    packageand(%{name}-noX:opencv4)
+# Data required for face detection
+Recommends:     opencv4
+
+%description opencv
+This subpackage provides a wrapper plugin for OpenCV for
+OpenCV based video filters and a face detection example.
+
+
 %global debug_package %{nil}
 %prep
 %setup -q
 %patch0 -p1
 %patch1 -p1
 %patch3 -p1
+%patch6 -p1
+%patch7 -p1
 ### Since live555-2020.12.11, connectionEndpointAddress() member function
 ### use a "struct sockaddr_storage" in preparation for eventual support of IPv6:
 ### http://www.live555.com/liveMedia/public/changelog.txt
@@ -351,11 +376,10 @@ fi
 
 ### And LUA 5.3.1 has some more API changes
 if pkg-config --atleast-version 5.3.1 lua; then
-  sed -i 's/luaL_checkint(/(int)luaL_checkinteger(/' \
-    modules/lua/{demux,libs/{configuration,dialog,net,osd,playlist,stream,variables,volume}}.c
 %patch2 -p1
+%patch5 -p1
 fi
-
+%patch8 -p1
 # We do not rely on contrib but make use of system libraries
 rm -rf contrib
 
@@ -370,7 +394,7 @@ autoreconf -fiv
    --disable-dependency-tracking        \
    --disable-oss                        \
    --disable-svgdec                     \
-   --disable-a52                         \
+   --disable-a52                        \
    --enable-aa                          \
    --enable-alsa                        \
    --enable-avcodec                     \
@@ -415,7 +439,7 @@ autoreconf -fiv
 %if 0%{?opengles}
   --enable-gles2                        \
 %endif
-  --disable-opencv                      \
+  --enable-opencv                       \
   --enable-wayland                      \
 %if 0%{?BUILD_ORIG}
 %if %{with fdk_aac}
@@ -529,6 +553,16 @@ if [ -x %{_libdir}/vlc/vlc-cache-gen ]; then
 fi
 
 %postun -n %{name}-vdpau
+if [ -x %{_libdir}/vlc/vlc-cache-gen ]; then
+  %{_libdir}/vlc/vlc-cache-gen %{_libdir}/vlc/plugins
+fi
+
+%post -n %{name}-opencv
+if [ -x %{_libdir}/vlc/vlc-cache-gen ]; then
+  %{_libdir}/vlc/vlc-cache-gen %{_libdir}/vlc/plugins
+fi
+
+%postun -n %{name}-opencv
 if [ -x %{_libdir}/vlc/vlc-cache-gen ]; then
   %{_libdir}/vlc/vlc-cache-gen %{_libdir}/vlc/plugins
 fi
@@ -1063,6 +1097,10 @@ fi
 %{_libdir}/vlc/plugins/vdpau/libvdpau_sharpen_plugin.so
 %{_libdir}/vlc/plugins/video_output/libglconv_vdpau_plugin.so
 
+%files opencv
+%{_libdir}/vlc/plugins/video_filter/libopencv_example_plugin.so
+%{_libdir}/vlc/plugins/video_filter/libopencv_wrapper_plugin.so
+
 %files -n libvlc%{libvlc}
 %{_libdir}/libvlc.so.%{libvlc}*
 
@@ -1098,6 +1136,11 @@ fi
 %endif
 
 %changelog
+* Mon Aug 8 2022 Jingwiw <wangjingwei@iscas.ac.cn> - 3.0.17.4-1
+- update to 3.0.17.4
+  enable opencv plugin and add support for opencv4
+  add lua and dav1d patches
+
 * Mon May 30 2022 Jingwiw <wangjingwei@iscas.ac.cn> - 3.0.17.3-1
 - init from openSUSE and fix for openEuler
   url: https://build.opensuse.org/package/show/openSUSE:Factory:RISCV/vlc
