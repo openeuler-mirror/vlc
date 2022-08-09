@@ -1,0 +1,171 @@
+diff --git a/configure.ac b/configure.ac
+index 2182860..d6e7535 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -1899,7 +1899,32 @@ PKG_ENABLE_MODULES_VLC([BLURAY], [libbluray], [libbluray >= 0.6.2], (libbluray f
+ dnl
+ dnl  OpenCV wrapper and example filters
+ dnl
+-PKG_ENABLE_MODULES_VLC([OPENCV], [opencv_example opencv_wrapper], [opencv > 2.0], (OpenCV (computer vision) filter), [auto])
++AC_ARG_ENABLE(opencv,
++  [AS_HELP_STRING([--enable-opencv],
++    [OpenCV (computer vision) filter (default auto)])])
++AS_IF([test "${enable_opencv}" != "no"], [
++  have_opencv="no"
++  PKG_CHECK_MODULES([OPENCV], [opencv4], [
++    have_opencv="yes"
++  ], [
++    PKG_CHECK_MODULES([OPENCV], [opencv > 2.0], [
++      have_opencv="yes"
++    ], [
++      AS_IF([test -n "${enable_opencv}"], [
++        AC_MSG_ERROR([${OPENCV_PKG_ERRORS}.])
++      ])
++    ])
++  ])
++  AS_IF([test "${have_opencv}" != "no"], [
++    VLC_ADD_PLUGIN([opencv_example opencv_wrapper])
++    VLC_ADD_LIBS([opencv_example opencv_wrapper], [$OPENCV_LIBS])
++    VLC_ADD_CFLAGS([opencv_example opencv_wrapper], [$OPENCV_CFLAGS])
++  ], [
++    AC_MSG_WARN([${OPENCV_PKG_ERRORS}.])
++    enable_opencv="no"
++  ])
++])
++AM_CONDITIONAL(HAVE_OPENCV, [test "$enable_opencv" != "no"])
+ 
+ 
+ dnl
+diff --git a/modules/video_filter/Makefile.am b/modules/video_filter/Makefile.am
+index af190d1..d1703a7 100644
+--- a/modules/video_filter/Makefile.am
++++ b/modules/video_filter/Makefile.am
+@@ -147,7 +147,7 @@ endif
+ libdeinterlace_plugin_la_LIBADD = libdeinterlace_common.la
+ video_filter_LTLIBRARIES += libdeinterlace_plugin.la
+ 
+-libopencv_wrapper_plugin_la_SOURCES = video_filter/opencv_wrapper.c
++libopencv_wrapper_plugin_la_SOURCES = video_filter/opencv_wrapper.cpp
+ libopencv_wrapper_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) $(OPENCV_CFLAGS)
+ libopencv_wrapper_plugin_la_LIBADD = $(OPENCV_LIBS)
+ libopencv_wrapper_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(video_filterdir)'
+diff --git a/modules/video_filter/opencv_example.cpp b/modules/video_filter/opencv_example.cpp
+index 87a3451..8a59804 100644
+--- a/modules/video_filter/opencv_example.cpp
++++ b/modules/video_filter/opencv_example.cpp
+@@ -40,8 +40,12 @@
+ #include <vlc_image.h>
+ #include "filter_event_info.h"
+ 
++#include <opencv2/imgproc/imgproc_c.h>
++#include <opencv2/objdetect.hpp>
+ #include <opencv2/opencv.hpp>
+ 
++
++
+ /*****************************************************************************
+  * filter_sys_t : filter descriptor
+  *****************************************************************************/
+@@ -167,7 +171,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
+     std::vector<cv::Rect> faces;
+     p_sys->cascade.detectMultiScale(gray, faces,
+                                     1.15, 5,
+-                                    CV_HAAR_DO_CANNY_PRUNING,
++                                    cv::CASCADE_DO_CANNY_PRUNING,
+                                     cv::Size(20, 20));
+     //create the video_filter_region_info_t struct
+     if (faces.empty())
+diff --git a/modules/video_filter/opencv_wrapper.c b/modules/video_filter/opencv_wrapper.cpp
+similarity index 97%
+rename from modules/video_filter/opencv_wrapper.c
+rename to modules/video_filter/opencv_wrapper.cpp
+index 525e55d..ca1c6a9 100644
+--- a/modules/video_filter/opencv_wrapper.c
++++ b/modules/video_filter/opencv_wrapper.cpp
+@@ -1,5 +1,5 @@
+ /*****************************************************************************
+- * opencv_wrapper.c : OpenCV wrapper video filter
++ * opencv_wrapper.cpp : OpenCV wrapper video filter
+  *****************************************************************************
+  * Copyright (C) 2006-2012 VLC authors and VideoLAN
+  * Copyright (C) 2012 Edward Wang
+@@ -41,6 +41,7 @@
+ 
+ #include <opencv2/core/core_c.h>
+ #include <opencv2/core/types_c.h>
++#include <opencv2/imgproc/imgproc_c.h>
+ 
+ /*****************************************************************************
+  * Local prototypes
+@@ -79,7 +80,7 @@ vlc_module_begin ()
+     set_callbacks( Create, Destroy )
+     add_float_with_range( "opencv-scale", 1.0, 0.1, 2.0,
+                           N_("Scale factor (0.1-2.0)"),
+-                          N_("Amount by which to scale the picture before sending it to the internal OpenCV filter"),
++                          N_("Amouhich to scale the pictnt by wure before sending it to the internal OpenCV filter"),
+                           false )
+     add_string( "opencv-chroma", "input",
+                           N_("OpenCV filter chroma"),
+@@ -154,8 +155,8 @@ static int Create( vlc_object_t *p_this )
+     char *psz_chroma, *psz_output;
+ 
+     /* Allocate structure */
+-    p_filter->p_sys = malloc( sizeof( filter_sys_t ) );
+-    if( p_filter->p_sys == NULL )
++    p_filter->p_sys = new filter_sys_t;
++    if( !p_filter->p_sys )
+         return VLC_ENOMEM;
+ 
+     /* Load the internal OpenCV filter.
+@@ -167,9 +168,9 @@ static int Create( vlc_object_t *p_this )
+      * We don't need to set up video formats for this filter as it not
+      * actually using a picture_t.
+      */
+-    p_filter->p_sys->p_opencv = vlc_object_create( p_filter, sizeof(filter_t) );
++    p_filter->p_sys->p_opencv = static_cast<filter_t*>( vlc_object_create( p_filter, sizeof(filter_t) ) );
+     if( !p_filter->p_sys->p_opencv ) {
+-        free( p_filter->p_sys );
++        delete  p_filter->p_sys;
+         return VLC_ENOMEM;
+     }
+ 
+@@ -187,7 +188,7 @@ static int Create( vlc_object_t *p_this )
+         free( p_filter->p_sys->psz_inner_name );
+         p_filter->p_sys->psz_inner_name = NULL;
+         vlc_object_release( p_filter->p_sys->p_opencv );
+-        free( p_filter->p_sys );
++        delete p_filter->p_sys;
+ 
+         return VLC_ENOMOD;
+     }
+@@ -273,7 +274,7 @@ static void Destroy( vlc_object_t *p_this )
+     vlc_object_release( p_filter->p_sys->p_opencv );
+     p_filter->p_sys->p_opencv = NULL;
+ 
+-    free( p_filter->p_sys );
++    delete p_filter->p_sys;
+ }
+ 
+ /*****************************************************************************
+@@ -315,7 +316,7 @@ static void VlcPictureToIplImage( filter_t* p_filter, picture_t* p_in )
+ {
+     int planes = p_in->i_planes;    //num input video planes
+     // input video size
+-    CvSize sz = cvSize(abs(p_in->format.i_width), abs(p_in->format.i_height));
++    CvSize sz = cvSize(p_in->format.i_width, p_in->format.i_height);
+     video_format_t fmt_out;
+     filter_sys_t* p_sys = p_filter->p_sys;
+ 
+diff --git a/po/POTFILES.in b/po/POTFILES.in
+index 3b01872..b5d65d3 100644
+--- a/po/POTFILES.in
++++ b/po/POTFILES.in
+@@ -1211,7 +1211,7 @@ modules/video_filter/motionblur.c
+ modules/video_filter/motiondetect.c
+ modules/video_filter/oldmovie.c
+ modules/video_filter/opencv_example.cpp
+-modules/video_filter/opencv_wrapper.c
++modules/video_filter/opencv_wrapper.cpp
+ modules/video_filter/posterize.c
+ modules/video_filter/postproc.c
+ modules/video_filter/psychedelic.c
