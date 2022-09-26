@@ -32,7 +32,7 @@
 %define fdk_aac 1
 Name:           vlc
 Version:        3.0.17.4
-Release:        1
+Release:        2
 Summary:        Graphical media player
 License:        GPL-2.0-or-later AND LGPL-2.1-or-later
 Group:          Productivity/Multimedia/Video/Players
@@ -55,6 +55,7 @@ Patch6:         vlc-dav1d-1.0.patch
 # PATCH-FIX-UPSTREAM -- Use OpenCV C++ API
 Patch7:         vlc-Port-OpenCV-facedetect-example-to-C-API.patch
 Patch8:         vlc-opencv4.patch
+Patch9:         add-riscv-support.patch
 
 BuildRequires:  pkgconfig(dri)
 BuildRequires:  mesa-libEGL-devel
@@ -380,6 +381,7 @@ if pkg-config --atleast-version 5.3.1 lua; then
 %patch5 -p1
 fi
 %patch8 -p1
+%patch9 -p1
 # We do not rely on contrib but make use of system libraries
 rm -rf contrib
 
@@ -1136,6 +1138,9 @@ fi
 %endif
 
 %changelog
+* Sat Sep 24 2022 Jingwiw <wangjingwei@iscas.ac.cn> - 3.0.17.4-2
+- backport riscv support
+
 * Mon Aug 8 2022 Jingwiw <wangjingwei@iscas.ac.cn> - 3.0.17.4-1
 - update to 3.0.17.4
   enable opencv plugin and add support for opencv4
